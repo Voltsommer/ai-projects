@@ -5,3 +5,8 @@ venv/
 .venv/
 .claude/
 .agents/
+
+# 运行时生成的用户数据，不要推到公开仓库
+chat_history.json
+data.csv
+sales.db
