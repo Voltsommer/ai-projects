@@ -13,6 +13,7 @@ import pandas as pd
 import streamlit as st
 import altair as alt
 from openai import OpenAI
+from sql_executor import clean_sql_output, execute_read_only_query
 
 api_key = os.environ.get('DEEPSEEK_API_KEY')
 if not api_key:
@@ -158,10 +159,6 @@ def generate_sql(question, schema_text):
     return response.choices[0].message.content
 
 
-def run_sql(sql, conn):
-    """第 2 步（数据库模式）：执行 SQL，结果转成 DataFrame"""
-    return pd.read_sql_query(sql, conn)
-
 # ---------- 3.5 图表美化 ----------
 # 验证过的分类调色板（dataviz 规范）：按顺序取用，不循环
 CHART_PALETTE = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#4a3aa7", "#e34948"]
@@ -256,8 +253,8 @@ if prompt:
         st.write(prompt)
     try:
         if source == "数据库":
-            sql = generate_sql(prompt, schema_text)
-            result = run_sql(sql, conn)
+            sql = clean_sql_output(generate_sql(prompt, schema_text))
+            result = execute_read_only_query(sql, conn)
             debug_code, debug_lang = sql, "sql"
         else:
             code = generate_code(prompt, df)
@@ -279,6 +276,8 @@ if prompt:
         save_messages()   # 存盘：刷新后对话还在
         with st.chat_message("assistant"):
             st.write(answer)
+            if isinstance(result, pd.DataFrame) and result.attrs.get("truncated"):
+                st.info(f"查询结果较多，仅展示前 {result.attrs['max_rows']} 行。")
             if chart_data is not None:
                 render_chart(chart_data)
         with st.expander("🔍 调试：AI 生成的代码"):

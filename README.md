@@ -53,12 +53,12 @@ streamlit run 02-网页学习助手/app.py
 **核心作品**：用自然语言问数据，AI 写代码（pandas / SQL）、Python 精确计算、自动出图表。支持**上传文件**和**连接数据库**两种数据来源。
 
 - **两种数据来源**：上传 CSV / Excel，或直接连接 SQLite 数据库查询
-- **自然语言提问** → AI 生成 pandas 代码（文件模式）或 SQL（数据库模式）→ 精确计算，100% 准确
+- **自然语言提问** → AI 生成 pandas 代码（文件模式）或 SQL（数据库模式）→ 由程序执行计算，减少模型直接心算造成的数值幻觉
 - **自动出图表**：类别 → 柱状图，月份 / 数字 → 折线图，按数据可视化规范定制配色与布局
 - **调试面板**：可展开查看 AI 生成的代码（SQL）和实际执行结果
-- **代码沙箱**：`exec` 屏蔽内置函数 + SQLite **只读连接**——AI 生成的代码无法破坏系统（DELETE / DROP 都被拒绝）
-- **数据持久化**：对话与数据存本地，刷新页面不丢失；侧边栏一键清除对话
-- 技术要点：NL2SQL / Text-to-Code 架构、提示词工程、SQL 安全沙箱、Streamlit 状态管理
+- **分层执行防护**：SQL 经过输出清洗、只读查询白名单、SQLite 只读授权、超时和行数限制；pandas 代码使用屏蔽内置函数的受限执行环境
+- **数据持久化**：对话文字与上次上传的数据存本地，刷新页面后可恢复；侧边栏一键清除对话
+- 技术要点：NL2SQL / Text-to-Code 架构、提示词工程、SQL 分层执行防护、Streamlit 状态管理
 
 ```bash
 pip install -r 03-数据问答助手/requirements.txt
@@ -68,6 +68,10 @@ export DEEPSEEK_API_KEY="你的key"
 cd 03-数据问答助手 && python init_db.py
 
 streamlit run 03-数据问答助手/app.py
+
+# 离线运行 SQL 安全测试（不会调用 DeepSeek）
+cd 03-数据问答助手
+python -m unittest discover -s tests -v
 ```
 
 ---
@@ -77,3 +81,5 @@ streamlit run 03-数据问答助手/app.py
 - 所有项目需要 **DeepSeek API Key**，通过环境变量 `DEEPSEEK_API_KEY` 提供（不写死在代码里）
 - 环境变量设置：Windows PowerShell 用 `$env:DEEPSEEK_API_KEY="你的key"`，macOS/Linux 用 `export DEEPSEEK_API_KEY="你的key"`
 - 示例数据：`03-数据问答助手/sample_data.csv`
+
+> 安全说明：程序执行能提高数值计算的可靠性，但 AI 仍可能选错字段或聚合方式，因此调试面板会保留生成逻辑和实际结果供核对。当前 pandas `exec` 是学习项目中的基础限制，不等同于操作系统级安全沙箱，不应直接用于执行不受信任用户提交的代码。
