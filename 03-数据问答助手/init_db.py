@@ -15,9 +15,9 @@ class SampleDatabaseError(RuntimeError):
     """示例数据缺失、结构无效或数据库无法创建。"""
 
 
-def create_sample_database(csv_file, database_file) -> int:
+def load_sample_dataframe(csv_file) -> pd.DataFrame:
+    """读取并校验仓库内的示例 CSV。"""
     csv_path = Path(csv_file).resolve()
-    database_path = Path(database_file).resolve()
     if not csv_path.is_file():
         raise SampleDatabaseError("找不到 sample_data.csv 示例数据。")
 
@@ -35,6 +35,12 @@ def create_sample_database(csv_file, database_file) -> int:
         )
     if dataframe.empty:
         raise SampleDatabaseError("示例数据没有可写入的记录。")
+    return dataframe[REQUIRED_COLUMNS].copy()
+
+
+def create_sample_database(csv_file, database_file) -> int:
+    dataframe = load_sample_dataframe(csv_file)
+    database_path = Path(database_file).resolve()
 
     database_path.parent.mkdir(parents=True, exist_ok=True)
     temporary_path = database_path.with_name(f".{database_path.name}.tmp")
@@ -54,7 +60,7 @@ def create_sample_database(csv_file, database_file) -> int:
                 )
                 """
             )
-            rows = dataframe[REQUIRED_COLUMNS].itertuples(index=False, name=None)
+            rows = dataframe.itertuples(index=False, name=None)
             connection.executemany(
                 "INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?)",
                 rows,

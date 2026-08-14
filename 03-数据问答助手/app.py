@@ -1,6 +1,7 @@
 """企业数据问答助手的 Streamlit 页面入口。"""
 
 import time
+from contextlib import closing
 
 import pandas as pd
 import streamlit as st
@@ -24,6 +25,13 @@ from database import (
     get_schema_text,
     list_user_tables,
     preview_table,
+)
+from data_management import (
+    DataManagementError,
+    add_sales_record,
+    delete_sales_records,
+    list_sales_records,
+    restore_sample_records,
 )
 from error_messages import user_error_message
 from init_db import SampleDatabaseError, ensure_sample_database
@@ -103,9 +111,133 @@ def render_data_quality(report):
         )
 
 
+def render_database_management(database_file, sample_csv_file):
+    """将人工写入集中在显式的数据管理区，AI 查询连接仍保持只读。"""
+    with st.expander("管理演示数据", icon=":material/database:"):
+        st.caption(
+            "这里的操作只影响本机 sales.db；AI 生成的 SQL 仍然只能查询数据。"
+        )
+
+        try:
+            records = list_sales_records(database_file)
+        except DataManagementError as exc:
+            st.error(str(exc), icon=":material/error:")
+            return
+
+        st.markdown("**当前记录**")
+        selection = st.dataframe(
+            records,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="multi-row",
+            key="sales_management_table",
+            column_config={
+                "记录ID": st.column_config.NumberColumn("记录编号", disabled=True),
+                "销量": st.column_config.NumberColumn("销量", format="%d"),
+                "销售额": st.column_config.NumberColumn("销售额", format="%d 元"),
+            },
+        )
+        selected_positions = list(selection.selection.rows)
+        selected_ids = [
+            int(records.iloc[position]["记录ID"])
+            for position in selected_positions
+            if 0 <= position < len(records)
+        ]
+        st.caption(f"已选择 {len(selected_ids)} 条记录。")
+
+        confirm_delete = st.checkbox(
+            "我确认删除所选记录",
+            disabled=not selected_ids,
+            key="confirm_sales_delete",
+        )
+        if st.button(
+            "删除所选记录",
+            disabled=not selected_ids,
+            key="delete_sales_records",
+            icon=":material/delete:",
+        ):
+            if not confirm_delete:
+                st.warning("删除前请勾选确认项。")
+            else:
+                try:
+                    deleted = delete_sales_records(database_file, selected_ids)
+                except DataManagementError as exc:
+                    st.error(str(exc), icon=":material/error:")
+                else:
+                    st.session_state.database_notice = f"已删除 {deleted} 条记录。"
+                    st.rerun()
+
+        st.divider()
+        st.markdown("**新增记录**")
+        with st.form("add_sales_record", clear_on_submit=True):
+            first_row = st.columns(3)
+            product = first_row[0].text_input("商品", max_chars=100)
+            category = first_row[1].text_input("品类", max_chars=100)
+            month = first_row[2].text_input("月份", placeholder="例如：4月", max_chars=100)
+
+            second_row = st.columns(3)
+            region = second_row[0].text_input("地区", max_chars=100)
+            quantity = second_row[1].number_input(
+                "销量",
+                min_value=0,
+                max_value=1_000_000_000,
+                step=1,
+            )
+            revenue = second_row[2].number_input(
+                "销售额",
+                min_value=0,
+                max_value=1_000_000_000_000,
+                step=1,
+            )
+            add_submitted = st.form_submit_button("新增记录", type="primary")
+
+        if add_submitted:
+            try:
+                record_id = add_sales_record(
+                    database_file,
+                    product=product,
+                    category=category,
+                    month=month,
+                    region=region,
+                    quantity=quantity,
+                    revenue=revenue,
+                )
+            except DataManagementError as exc:
+                st.error(str(exc), icon=":material/error:")
+            else:
+                st.session_state.database_notice = (
+                    f"记录新增成功，记录编号为 {record_id}。"
+                )
+                st.rerun()
+
+        st.divider()
+        st.markdown("**恢复初始示例数据**")
+        st.caption("此操作会清除当前 sales 表，并重新载入 sample_data.csv。")
+        confirm_restore = st.checkbox(
+            "我确认覆盖当前演示数据",
+            key="confirm_sample_restore",
+        )
+        if st.button(
+            "恢复示例数据",
+            disabled=not confirm_restore,
+            key="restore_sample_records",
+            icon=":material/restore:",
+        ):
+            try:
+                restored = restore_sample_records(database_file, sample_csv_file)
+            except DataManagementError as exc:
+                st.error(str(exc), icon=":material/error:")
+            else:
+                st.session_state.database_notice = (
+                    f"已恢复初始示例数据，共 {restored} 条记录。"
+                )
+                st.rerun()
+
+
 st.title("📊 企业数据问答助手")
 
 st.session_state.setdefault("persistence_warning", None)
+st.session_state.setdefault("database_notice", None)
 if "messages" not in st.session_state:
     messages, persistence_warning = load_messages(config.chat_file)
     st.session_state.messages = messages
@@ -115,9 +247,14 @@ if st.session_state.persistence_warning:
     st.warning(st.session_state.persistence_warning, icon=":material/warning:")
     st.session_state.persistence_warning = None
 
+if st.session_state.database_notice:
+    st.success(st.session_state.database_notice, icon=":material/check_circle:")
+    st.session_state.database_notice = None
+
 if not config.ai_enabled:
     st.info(
-        "当前为只读浏览模式。配置 DEEPSEEK_API_KEY 后即可使用自然语言提问。",
+        "当前未配置 AI 服务。仍可浏览和管理本地演示数据；配置 "
+        "DEEPSEEK_API_KEY 后即可使用自然语言提问。",
         icon=":material/key:",
     )
 
@@ -131,26 +268,31 @@ st.sidebar.button("🧹 清除对话", on_click=clear_chat)
 source = st.segmented_control("数据来源", ["上传文件", "数据库"], default="数据库")
 
 df = None
-conn = None
 schema_text = None
 quality_report = None
+table = None
 
 if source == "数据库":
     try:
         ensure_sample_database(config.base_dir)
-        conn = connect_read_only(config.database_file)
-        tables = list_user_tables(conn)
-        if not tables:
-            raise DatabaseAccessError("数据库中没有可用的数据表。")
-        table = st.selectbox("选择数据表", tables)
-        schema_text = get_schema_text(conn, table)
-        table_preview = preview_table(conn, table)
+        with closing(connect_read_only(config.database_file)) as preview_connection:
+            tables = list_user_tables(preview_connection)
+            if not tables:
+                raise DatabaseAccessError("数据库中没有可用的数据表。")
+            table = st.selectbox("选择数据表", tables)
+            schema_text = get_schema_text(preview_connection, table)
+            table_preview = preview_table(preview_connection, table)
     except (DatabaseAccessError, SampleDatabaseError) as exc:
         st.error(user_error_message(exc), icon=":material/database_off:")
         st.stop()
     st.subheader("📋 表结构")
     st.code(schema_text)
     st.dataframe(table_preview, hide_index=True)
+    if table == "sales":
+        render_database_management(
+            config.database_file,
+            config.base_dir / "sample_data.csv",
+        )
 else:
     uploaded = st.file_uploader(
         "上传数据文件（CSV 或 Excel）",
@@ -224,7 +366,7 @@ for msg in st.session_state.messages:
         render_analysis_record(msg.get("analysis"))
 
 # 判断当前有没有可用数据（数据库模式连上就算有）
-has_data = (source == "数据库") or (
+has_data = (source == "数据库" and table is not None) or (
     df is not None
     and quality_report is not None
     and quality_report["is_usable"]
@@ -251,13 +393,14 @@ if prompt:
         st.write(prompt)
     try:
         if source == "数据库":
-            outcome = analyse_database_question(
-                prompt,
-                schema_text,
-                table,
-                conn,
-                ai_service,
-            )
+            with closing(connect_read_only(config.database_file)) as query_connection:
+                outcome = analyse_database_question(
+                    prompt,
+                    schema_text,
+                    table,
+                    query_connection,
+                    ai_service,
+                )
         else:
             outcome = analyse_dataframe_question(
                 prompt,
