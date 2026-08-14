@@ -1,41 +1,86 @@
-# ============================================================
-# init_db.py：把 sample_data.csv 灌进 SQLite 数据库
-# 运行一次即可：python init_db.py
-# ============================================================
+"""从仓库内的示例 CSV 创建可重复生成的 SQLite 演示数据库。"""
+
+from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
+
 import pandas as pd
 
-DB_FILE = "sales.db"
 
-# 1. 用 pandas 读示例数据
-df = pd.read_csv("sample_data.csv")
+REQUIRED_COLUMNS = ["商品", "品类", "月份", "地区", "销量", "销售额"]
 
-# 2. 连接数据库（文件不存在会自动创建）
-conn = sqlite3.connect(DB_FILE)
 
-# 3. 建表（先删旧的再重建，保证可重复运行）
-conn.execute("DROP TABLE IF EXISTS sales")
-conn.execute("""
-    CREATE TABLE sales (
-        商品  TEXT,
-        品类  TEXT,
-        月份  TEXT,
-        地区  TEXT,
-        销量  INTEGER,
-        销售额 INTEGER
+class SampleDatabaseError(RuntimeError):
+    """示例数据缺失、结构无效或数据库无法创建。"""
+
+
+def create_sample_database(csv_file, database_file) -> int:
+    csv_path = Path(csv_file).resolve()
+    database_path = Path(database_file).resolve()
+    if not csv_path.is_file():
+        raise SampleDatabaseError("找不到 sample_data.csv 示例数据。")
+
+    try:
+        dataframe = pd.read_csv(csv_path)
+    except (OSError, UnicodeError, pd.errors.ParserError) as exc:
+        raise SampleDatabaseError("示例 CSV 无法读取。") from exc
+
+    missing_columns = [
+        column for column in REQUIRED_COLUMNS if column not in dataframe.columns
+    ]
+    if missing_columns:
+        raise SampleDatabaseError(
+            "示例数据缺少字段：" + "、".join(missing_columns)
+        )
+    if dataframe.empty:
+        raise SampleDatabaseError("示例数据没有可写入的记录。")
+
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    temporary_path = database_path.with_name(f".{database_path.name}.tmp")
+    temporary_path.unlink(missing_ok=True)
+    try:
+        connection = sqlite3.connect(temporary_path)
+        try:
+            connection.execute(
+                """
+                CREATE TABLE sales (
+                    商品 TEXT NOT NULL,
+                    品类 TEXT NOT NULL,
+                    月份 TEXT NOT NULL,
+                    地区 TEXT NOT NULL,
+                    销量 INTEGER NOT NULL,
+                    销售额 INTEGER NOT NULL
+                )
+                """
+            )
+            rows = dataframe[REQUIRED_COLUMNS].itertuples(index=False, name=None)
+            connection.executemany(
+                "INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?)",
+                rows,
+            )
+            connection.commit()
+        finally:
+            connection.close()
+        temporary_path.replace(database_path)
+    except (OSError, sqlite3.Error) as exc:
+        temporary_path.unlink(missing_ok=True)
+        raise SampleDatabaseError("示例数据库创建失败。") from exc
+    return len(dataframe)
+
+
+def ensure_sample_database(base_dir) -> Path:
+    root = Path(base_dir).resolve()
+    database_path = root / "sales.db"
+    if not database_path.exists():
+        create_sample_database(root / "sample_data.csv", database_path)
+    return database_path
+
+
+if __name__ == "__main__":
+    project_dir = Path(__file__).resolve().parent
+    created_rows = create_sample_database(
+        project_dir / "sample_data.csv",
+        project_dir / "sales.db",
     )
-""")
-
-# 4. 把 CSV 每一行插进数据库（? 是占位符，防止 SQL 注入）
-for _, row in df.iterrows():
-    conn.execute(
-        "INSERT INTO sales VALUES (?, ?, ?, ?, ?, ?)",
-        (row["商品"], row["品类"], row["月份"], row["地区"], row["销量"], row["销售额"]),
-    )
-
-# 5. 提交事务，关闭连接
-conn.commit()
-conn.close()
-
-print(f"✅ 已创建 {DB_FILE}，表 sales，共 {len(df)} 行")
+    print(f"已创建 sales.db，表 sales，共 {created_rows} 行。")

@@ -63,6 +63,23 @@ class SqlExecutorTests(unittest.TestCase):
         with self.assertRaisesRegex(SqlExecutionError, "自动终止"):
             execute_read_only_query(slow_query, self.conn, timeout_seconds=0)
 
+    def test_restricts_reads_to_selected_table(self):
+        self.conn.execute("CREATE TABLE private_data (secret TEXT)")
+        self.conn.execute("INSERT INTO private_data VALUES ('hidden')")
+
+        allowed = execute_read_only_query(
+            "SELECT * FROM sales",
+            self.conn,
+            allowed_tables={"sales"},
+        )
+        self.assertEqual(len(allowed), 3)
+        with self.assertRaisesRegex(SqlExecutionError, "执行失败"):
+            execute_read_only_query(
+                "SELECT * FROM private_data",
+                self.conn,
+                allowed_tables={"sales"},
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

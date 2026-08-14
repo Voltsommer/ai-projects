@@ -1,0 +1,10 @@
+[server]
+maxUploadSize = 10
+maxMessageSize = 12
+
+[client]
+showErrorDetails = "none"
+toolbarMode = "minimal"
+
+[browser]
+gatherUsageStats = false

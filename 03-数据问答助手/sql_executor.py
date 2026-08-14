@@ -118,10 +118,8 @@ def validate_read_only_query(raw_sql: str) -> str:
     return sql
 
 
-def _read_only_authorizer(action_code, parameter_1, parameter_2, database_name, trigger_name):
+def _build_read_only_authorizer(allowed_tables=None):
     """SQLite 的第二层防护：即使文本校验漏掉，也拒绝修改数据库。"""
-    del database_name, trigger_name
-
     denied_actions = {
         sqlite3.SQLITE_INSERT,
         sqlite3.SQLITE_UPDATE,
@@ -151,13 +149,25 @@ def _read_only_authorizer(action_code, parameter_1, parameter_2, database_name, 
         sqlite3.SQLITE_TRANSACTION,
         sqlite3.SQLITE_SAVEPOINT,
     }
-    if action_code in denied_actions:
-        return sqlite3.SQLITE_DENY
+    allowed_table_names = set(allowed_tables) if allowed_tables is not None else None
 
-    function_name = parameter_2 or parameter_1
-    if action_code == sqlite3.SQLITE_FUNCTION and str(function_name).lower() == "load_extension":
-        return sqlite3.SQLITE_DENY
-    return sqlite3.SQLITE_OK
+    def authorizer(action_code, parameter_1, parameter_2, database_name, trigger_name):
+        del database_name, trigger_name
+        if action_code in denied_actions:
+            return sqlite3.SQLITE_DENY
+        if (
+            action_code == sqlite3.SQLITE_READ
+            and allowed_table_names is not None
+            and parameter_1 not in allowed_table_names
+        ):
+            return sqlite3.SQLITE_DENY
+
+        function_name = parameter_2 or parameter_1
+        if action_code == sqlite3.SQLITE_FUNCTION and str(function_name).lower() == "load_extension":
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    return authorizer
 
 
 def execute_read_only_query(
@@ -166,6 +176,7 @@ def execute_read_only_query(
     *,
     max_rows: int = DEFAULT_MAX_ROWS,
     timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+    allowed_tables=None,
 ) -> pd.DataFrame:
     """在只读授权、超时和结果行数限制下执行查询。"""
     if max_rows < 1:
@@ -179,7 +190,7 @@ def execute_read_only_query(
     def query_timed_out():
         return int(time.monotonic() - started_at >= timeout_seconds)
 
-    conn.set_authorizer(_read_only_authorizer)
+    conn.set_authorizer(_build_read_only_authorizer(allowed_tables))
     conn.set_progress_handler(query_timed_out, 100)
     try:
         cursor = conn.execute(sql)

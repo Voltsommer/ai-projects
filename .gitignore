@@ -10,3 +10,6 @@ venv/
 chat_history.json
 data.csv
 sales.db
+*.corrupt-*.json
+.chat_history.json.tmp
+analysis_events.jsonl
