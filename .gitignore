@@ -13,3 +13,7 @@ sales.db
 *.corrupt-*.json
 .chat_history.json.tmp
 analysis_events.jsonl
+
+# 私人求职材料与 PDF 检查中间文件，不提交到公开仓库
+output/
+tmp/
